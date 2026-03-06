@@ -176,3 +176,6 @@ tags
 # Cursor IDE files
 .cursor/
 test-results/
+/bart_qa
+/chat-gpt2
+/download_model
