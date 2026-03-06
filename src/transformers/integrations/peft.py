@@ -226,7 +226,7 @@ def _build_peft_weight_mapping(
             new_weight_conversions.append(orig_conversion)
             continue
 
-        if orig_conversion.target_patterns == ["mlp.experts.gate_up_proj"]:
+        if len(orig_conversion.target_patterns) == 1 and orig_conversion.target_patterns[0].endswith("gate_up_proj"):
             # gate_up_proj requires both merging the experts and concatenating for the fusion of w1 and w3
             for lora in ("lora_A", "lora_B"):  # TODO: lora_embedding_A and lora_embedding_B
                 # deal with operations
@@ -242,7 +242,7 @@ def _build_peft_weight_mapping(
                         peft_weight_operations.append(op)
 
                 # TODO: this assumption may not hold for models != mixtral
-                # For source, we capture the orignal weights + the lora weights
+                # For source, we capture the original weights + the lora weights
                 new_source_patterns = []
                 for pat in list(orig_conversion.source_patterns):
                     # we replace the weight pattern to colllect loras
@@ -261,12 +261,12 @@ def _build_peft_weight_mapping(
                     source_patterns=new_source_patterns,
                     target_patterns=new_target_patterns,
                     distributed_operation=orig_conversion.distributed_operation,
-                    quantization_operation=orig_conversion.quantizatin_operations,
-                    operations=new_weight_conversions,
+                    quantization_operation=orig_conversion.quantization_operation,
+                    operations=peft_weight_operations,
                 )
                 new_weight_conversions.append(new_conversion)
 
-        elif orig_conversion.target_patterns == ["mlp.experts.down_proj"]:
+        elif len(orig_conversion.target_patterns) == 1 and orig_conversion.target_patterns[0].endswith("down_proj"):
             # down_proj only requires merging of experts
             for lora in ("lora_A", "lora_B"):  # TODO: lora_embedding_A and lora_embedding_B
                 peft_weight_operations = []
@@ -281,7 +281,7 @@ def _build_peft_weight_mapping(
                             peft_weight_operations.append(Transpose(dim0=0, dim1=1))
 
                 # TODO: this assumption may not hold for models != mixtral
-                # For source, we capture the orignal weights + the lora weights
+                # For source, we capture the original weights + the lora weights
                 new_source_patterns = []
                 for pat in list(orig_conversion.source_patterns):
                     # we replace the weight pattern to colllect loras
@@ -300,8 +300,8 @@ def _build_peft_weight_mapping(
                     source_patterns=new_source_patterns,
                     target_patterns=new_target_patterns,
                     distributed_operation=orig_conversion.distributed_operation,
-                    quantization_operation=orig_conversion.quantizatin_operations,
-                    operations=new_weight_conversions,
+                    quantization_operation=orig_conversion.quantization_operation,
+                    operations=peft_weight_operations,
                 )
                 new_weight_conversions.append(new_conversion)
 
@@ -572,7 +572,7 @@ class PeftAdapterMixin:
             sharded_metadata=sharded_metadata,
             weight_mapping=peft_weight_conversions,
         )
-        load_info = self._load_pretrained_model(
+        loading_info, _ = self._load_pretrained_model(
             model=self,
             state_dict=adapter_state_dict,
             checkpoint_files=checkpoint_files,
@@ -586,24 +586,15 @@ class PeftAdapterMixin:
         def is_adapter_key(key: str) -> bool:
             return any(marker in key for marker in adapter_key_markers)
 
-        load_info = replace(
-            load_info,
-            missing_keys=[k for k in load_info.missing_keys if is_adapter_key(k)],
-            mismatched_keys=load_info.mismatched_keys,
-        )
+        loading_info.missing_keys = {k for k in loading_info.missing_keys if is_adapter_key(k)}
 
         log_state_dict_report(
             model=self,
-            load_config=load_config,
+            pretrained_model_name_or_path=load_config.pretrained_model_name_or_path,
+            ignore_mismatched_sizes=load_config.ignore_mismatched_sizes,
+            loading_info=loading_info,
             logger=logger,
-            error_msgs=load_info.error_msgs,
-            unexpected_keys=load_info.unexpected_keys,
-            missing_keys=load_info.missing_keys,
-            mismatched_keys=load_info.mismatched_keys,
-            mismatched_shapes=load_info.mismatched_keys,
-            conversion_errors=load_info.conversion_errors,
         )
-        return load_info
 
     def enable_peft_hotswap(
         self, target_rank: int = 128, check_compiled: Literal["error", "warn", "ignore"] = "error"
@@ -963,7 +954,14 @@ def maybe_load_adapters(
     if _adapter_model_path is not None and os.path.isfile(_adapter_model_path):
         with open(_adapter_model_path, "r", encoding="utf-8") as f:
             _adapter_model_path = pretrained_model_name_or_path
-            pretrained_model_name_or_path = json.load(f)["base_model_name_or_path"]
+            # Only override the model name/path if the current value doesn't point to a
+            # complete model with an embedded adapter so that local models with embedded
+            # adapters will load from the local base model rather than pull the base
+            # model named in the adapter's config from the hub.
+            if not os.path.exists(pretrained_model_name_or_path) or not os.path.exists(
+                os.path.join(pretrained_model_name_or_path, CONFIG_NAME)
+            ):
+                pretrained_model_name_or_path = json.load(f)["base_model_name_or_path"]
 
     return _adapter_model_path, pretrained_model_name_or_path, adapter_kwargs
 

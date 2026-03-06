@@ -33,6 +33,7 @@ from transformers import (
     GPT2Tokenizer,
     HerbertTokenizer,
     PreTrainedTokenizerFast,
+    PythonBackend,
     Qwen2Tokenizer,
     Qwen2TokenizerFast,
     Qwen3MoeConfig,
@@ -152,7 +153,6 @@ class AutoTokenizerTest(unittest.TestCase):
             self.assertEqual(tokenizer.model_max_length, 512)
 
     @require_tokenizers
-    @unittest.skip("Broken right now but not very important")
     def test_tokenizer_identifier_non_existent(self):
         for tokenizer_class in [BertTokenizer, AutoTokenizer]:
             with self.assertRaisesRegex(
@@ -459,6 +459,14 @@ class AutoTokenizerTest(unittest.TestCase):
         self.assertIsNot(tokenizer.__class__, reloaded_tokenizer.__class__)
         self.assertTrue(reloaded_tokenizer.special_attribute_present)
 
+    @slow
+    def test_custom_tokenizer_init(self):
+        tokenizer = AutoTokenizer.from_pretrained(
+            "Qwen/Qwen-VL", trust_remote_code=True, revision="0547ed36a86561e2e42fecec8fd0c4f6953e33c4"
+        )
+        self.assertIsInstance(tokenizer, PythonBackend)
+        self.assertGreater(len(tokenizer.get_vocab()), 0)
+
     @require_tokenizers
     def test_from_pretrained_dynamic_tokenizer_conflict(self):
         class NewTokenizer(BertTokenizer):
@@ -613,13 +621,7 @@ class NopConfig(PreTrainedConfig):
             tok2 = AutoTokenizer.from_pretrained(tmp_dir)
             self.assertTrue(tok2.__class__ == HerbertTokenizer)
 
-        tok = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-135M-Instruct")
-        self.assertTrue(tok.__class__ == TokenizersBackend)
-
         tok = AutoProcessor.from_pretrained("mistralai/Ministral-3-8B-Instruct-2512-BF16").tokenizer
-        self.assertTrue(tok.__class__ == TokenizersBackend)
-
-        tok = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-135M-Instruct")
         self.assertTrue(tok.__class__ == TokenizersBackend)
 
     def test_custom_tokenizer_with_mismatched_tokenizer_class(self):
